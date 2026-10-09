@@ -41,7 +41,7 @@ export default function createStatelessServer({
     id: "buscar-cep",
     name: "Buscar endereço pelo CEP",
     version: "0.1.0",
-  });
+  } as any);
 
   function sanitizeCEP(rawCep: string): string {
     const cep = rawCep.replace(/\D/g, "");
