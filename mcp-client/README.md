@@ -177,6 +177,7 @@ mcp-client/
 
 ```mermaid
 sequenceDiagram
+    autonumber
     actor U as Usuário
     participant C as chat-cli
     participant A as ClaudeAgent
