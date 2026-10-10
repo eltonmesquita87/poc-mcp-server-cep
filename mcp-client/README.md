@@ -56,21 +56,28 @@ Sem `ANTHROPIC_API_KEY`, o cliente ainda se conecta, imprime as ferramentas do s
 Quem usa o sistema e com quais sistemas externos ele se integra.
 
 ```mermaid
-C4Context
-    title Contexto — MCP Client CLI
+flowchart LR
+    user(["<b>Usuário</b><br/>[Pessoa]<br/>Faz perguntas em linguagem natural"])
+    client["<b>MCP Client CLI</b><br/>[Sistema]<br/>Chat em CLI que orquestra<br/>o Claude e as ferramentas MCP"]
 
-    Person(user, "Usuário", "Faz perguntas em linguagem natural pelo terminal")
+    subgraph ext ["Sistemas externos"]
+        direction TB
+        anthropic["<b>Anthropic API</b><br/>[Sistema externo]<br/>Claude (Messages API)"]
+        mcpServer["<b>Servidor MCP</b><br/>[Sistema externo]<br/>Ex.: MCP CEP Service (busca_cep)"]
+        viacep["<b>ViaCEP</b><br/>[Sistema externo]<br/>API pública de endereços por CEP"]
+    end
 
-    System(client, "MCP Client CLI", "Chat em CLI que orquestra o Claude e as ferramentas MCP")
+    user -->|"Consultas e respostas<br/>(stdin/stdout)"| client
+    client -->|"Mensagens + tools<br/>(HTTPS)"| anthropic
+    client -->|"listTools / callTool<br/>(MCP)"| mcpServer
+    mcpServer -->|"GET /ws/{cep}/json<br/>(HTTPS)"| viacep
 
-    System_Ext(anthropic, "Anthropic API", "Claude (Messages API) — raciocínio e decisão de uso de ferramentas")
-    System_Ext(mcpServer, "Servidor MCP", "Expõe ferramentas, ex.: MCP CEP Service (busca_cep)")
-    System_Ext(viacep, "ViaCEP", "API pública de endereços por CEP")
-
-    Rel(user, client, "Digita consultas e lê respostas", "stdin/stdout")
-    Rel(client, anthropic, "Envia mensagens + definição de tools", "HTTPS / Messages API")
-    Rel(client, mcpServer, "Lista e executa tools", "MCP: StreamableHTTP, SSE ou stdio")
-    Rel(mcpServer, viacep, "Consulta endereço", "HTTPS GET /ws/{cep}/json")
+    classDef person fill:#08427b,stroke:#052e56,color:#fff
+    classDef system fill:#1168bd,stroke:#0b4884,color:#fff
+    classDef external fill:#999,stroke:#6b6b6b,color:#fff
+    class user person
+    class client system
+    class anthropic,mcpServer,viacep external
 ```
 
 ### Nível 2 — Containers
@@ -78,23 +85,32 @@ C4Context
 O cliente é um único processo Node.js; os demais containers são os limites de integração.
 
 ```mermaid
-C4Container
-    title Containers — MCP Client CLI
+flowchart LR
+    user(["<b>Usuário</b><br/>[Pessoa]<br/>Terminal"])
 
-    Person(user, "Usuário", "Terminal")
+    subgraph boundary ["MCP Client CLI"]
+        cli["<b>Processo Node.js</b><br/>[Container: TypeScript]<br/>Lê consultas, orquestra o loop<br/>Claude ↔ tools e imprime respostas"]
+    end
 
-    System_Boundary(clientBoundary, "MCP Client CLI") {
-        Container(cli, "Processo Node.js", "TypeScript / Node.js", "Lê consultas, orquestra o loop Claude ↔ tools e imprime respostas")
-    }
+    env[(".env<br/>[Arquivo]<br/>Chave e workspace")]
 
-    System_Ext(anthropic, "Anthropic API", "Messages API (HTTPS)")
-    System_Ext(mcpServer, "Servidor MCP", "HTTP (StreamableHTTP/SSE) ou processo filho (stdio)")
-    System_Ext(dotenv, ".env", "Variáveis de ambiente: chave e workspace")
+    subgraph ext ["Sistemas externos"]
+        direction TB
+        anthropic["<b>Anthropic API</b><br/>[Sistema externo]<br/>Messages API"]
+        mcpServer["<b>Servidor MCP</b><br/>[Sistema externo]<br/>HTTP ou processo filho (stdio)"]
+    end
 
-    Rel(user, cli, "Consultas / respostas", "stdin/stdout")
-    Rel(cli, anthropic, "messages.create", "HTTPS")
-    Rel(cli, mcpServer, "listTools / callTool", "MCP")
-    Rel(cli, dotenv, "Carrega configuração", "dotenv")
+    user -->|"stdin/stdout"| cli
+    env -->|"dotenv"| cli
+    cli -->|"messages.create<br/>(HTTPS)"| anthropic
+    cli -->|"listTools / callTool<br/>(MCP)"| mcpServer
+
+    classDef person fill:#08427b,stroke:#052e56,color:#fff
+    classDef container fill:#438dd5,stroke:#2e6295,color:#fff
+    classDef external fill:#999,stroke:#6b6b6b,color:#fff
+    class user person
+    class cli container
+    class anthropic,mcpServer,env external
 ```
 
 ### Nível 3 — Componentes
@@ -102,29 +118,42 @@ C4Container
 Os módulos do processo e suas dependências. A seta de `ClaudeAgent` para `McpConnection` passa pela interface `ToolExecutor`, de modo que o agente não conhece MCP.
 
 ```mermaid
-C4Component
-    title Componentes — Processo Node.js
+flowchart TB
+    subgraph cli ["Processo Node.js — MCP Client CLI"]
+        direction TB
+        main["<b>index.ts</b><br/>[Composition root]<br/>Valida argv, conecta, checa API key,<br/>monta as peças e controla o exit code"]
 
-    Container_Boundary(cli, "MCP Client CLI") {
-        Component(main, "index.ts (main)", "Composition root", "Valida argv, conecta, checa API key, monta as peças, controla ciclo de vida e exit code")
-        Component(chat, "chat-cli.ts (runChatLoop)", "readline", "Prompt interativo, 'quit', EOF e SIGINT")
-        Component(agent, "claude-agent.ts (ClaudeAgent)", "Orquestrador", "Loop Claude ↔ tools por consulta; limite de turnos")
-        Component(conn, "mcp-connection.ts (McpConnection)", "Adapter MCP", "Escolha de transporte, descoberta e execução de tools")
-        Component(config, "config.ts", "Configuração", "Constantes e fábrica do cliente Anthropic")
-    }
+        subgraph ui ["Entrada/Saída"]
+            chat["<b>chat-cli.ts</b><br/>[runChatLoop]<br/>Prompt, quit, EOF e SIGINT"]
+        end
 
-    System_Ext(anthropic, "Anthropic API", "Messages API")
-    System_Ext(mcpServer, "Servidor MCP", "Tools")
+        subgraph core ["Orquestração"]
+            agent["<b>claude-agent.ts</b><br/>[ClaudeAgent]<br/>Loop Claude ↔ tools<br/>e limite de turnos"]
+        end
 
-    Rel(main, conn, "connect(), close()")
-    Rel(main, config, "createAnthropicClient()")
-    Rel(main, agent, "instancia com client, executor e tools")
-    Rel(main, chat, "runChatLoop(handler)")
-    Rel(chat, agent, "processQuery(query)", "via handler")
-    Rel(agent, conn, "callTool()", "interface ToolExecutor")
-    Rel(agent, config, "Lê modelo, MAX_TOKENS, MAX_TOOL_TURNS")
-    Rel(agent, anthropic, "messages.create", "HTTPS")
-    Rel(conn, mcpServer, "connect / listTools / callTool", "MCP")
+        subgraph infra ["Integração e configuração"]
+            conn["<b>mcp-connection.ts</b><br/>[McpConnection]<br/>Transporte, descoberta<br/>e execução de tools"]
+            config["<b>config.ts</b><br/>[Configuração]<br/>Constantes e fábrica<br/>do cliente Anthropic"]
+        end
+    end
+
+    anthropic["<b>Anthropic API</b><br/>[Sistema externo]"]
+    mcpServer["<b>Servidor MCP</b><br/>[Sistema externo]"]
+
+    main -->|"runChatLoop(handler)"| chat
+    main -->|"instancia"| agent
+    main -->|"connect / close"| conn
+    main -->|"createAnthropicClient"| config
+    chat -->|"processQuery(query)"| agent
+    agent -->|"callTool<br/>(ToolExecutor)"| conn
+    agent -.->|"modelo, MAX_TOKENS,<br/>MAX_TOOL_TURNS"| config
+    agent -->|"messages.create<br/>(HTTPS)"| anthropic
+    conn -->|"MCP"| mcpServer
+
+    classDef component fill:#85bbf0,stroke:#5d82a8,color:#000
+    classDef external fill:#999,stroke:#6b6b6b,color:#fff
+    class main,chat,agent,conn,config component
+    class anthropic,mcpServer external
 ```
 
 ### Seleção de transporte (`McpConnection.connect`)
